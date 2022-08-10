@@ -1,0 +1,134 @@
+#
+units           real
+atom_style      full
+
+neighbor        1.5    bin 
+neigh_modify    delay 0 every 1 check yes
+
+read_data    init.data
+replicate 4 4 4
+
+# group the atoms together
+group real type 1 2 3 4
+group ion type 1 3
+group naion type 3
+group clion type 1
+group oatom type 4
+
+# water is SPC/E here
+set type 1 charge -1.0
+set type 2 charge  0.4238
+set type 3 charge +1.0
+set type 4 charge -0.8476
+set type 5 charge  0.0
+# Defining the pair style. In this case is a LJ with cutoff and Coulombic interaction is treated not
+# with a cutoff but with PPPM
+pair_style lj/cut/coul/long 10.0
+kspace_style pppm 1.0e-5
+# These are the coefficient for the LJ interaction. The first two number are the index
+# referring to the atomic species in the .data file (index must match the atoms. double check!)
+# the symbol * can be used to say that the interaction is valid for all the atoms in the system.
+pair_coeff 1 1 0.012785 4.830 # Cl
+pair_coeff 2 2 0.0000 0.00000 # H
+pair_coeff 3 3 0.3526418 2.160 # Na
+pair_coeff 4 4 0.1553 3.166 # O
+pair_coeff 5 5 0.0000 0.00000
+pair_modify tail yes mix arithmetic
+
+# Defining the bond style and the angle style.
+# After the definition, the coefficient are defined. The firs number refer to the index of the bonds
+# (1-> first bond type ; 2->second bond type) and MUST match the .data file. Same for the angle.
+# The first number is the force constant while the second is the equilibrium length.
+bond_style harmonic
+bond_coeff 1 1000.0 1.0
+angle_style harmonic
+angle_coeff 1 100.0 109.47
+
+# Defining the type of integration that will be used in the MD part.
+# In this case verlet
+run_style       verlet
+# Define the screen output of the simulation. The first command define the stride at which
+# the information are printed. The second style define what have to be printed.
+thermo          500
+thermo_style    custom step pe etotal temp press lx vol
+thermo_modify   flush yes
+
+# This command the code to perform an energy minimization before starting the MD.
+# the four numbers are the tolerance on energy and force changes respectively, while the seconds two
+# the number of iteration and the number of energy/forces evaluation.
+
+#minimize        1.0e-4 1.0e-7 1000 1000
+
+# Create the velocity according to a gaussian distribution, at 300.0 Kelvin. The second number
+# is a random number needed to randomize the velocity. The keyword rot yes set the initial angular momentum to 0.
+
+velocity        real create 300.0 432567 rot yes dist gaussian
+
+# Timestep of the simulation
+
+timestep        2
+
+# Fixing the bonds and angles to allow a larger timestep. This is performed with the shake algorythm
+# with a tolerance of 0.0001 and 20 iteration. The 0 means that no information on the shake are printed in the
+# output. If information are needed, 0 can be changed to the stride in the print (memory and space consunming!)
+# b 1 a 1 instruct the programs to contraint the 1 angle type and the first bond type
+fix             sh real shake 0.0001 20 0 b 1 a 1
+fix             mom real momentum 1000 linear 1 1 1
+# This is the thermostat used in the simulation. All means that we are applying the thermostat to all the atoms (and hence is a global thermostat).
+# The first two number (300.00) are the starting end ending temperature. The next number is the time constant coupling (approx 1000*timestep).
+# the last number is again random number for the velocity creation.
+#fix             int all nve
+#fix             thrm all temp/csvr 300.0 300.0 200.0 54324   # not compatible with shake!
+#
+fix              equal real npt temp 458.15 298.15 200.0 iso 1.0 1.0 2000.0
+run 100000
+unfix equal
+
+fix              thrm real npt temp 298.15 298.15 200.0 iso 1.0 1.0 2000.0
+run 200000
+
+write_data       data.equal
+write_restart    restart.equal
+
+#compute          rdf all rdf 100 1 3 
+#fix              out all ave/time 100 1 500 c_rdf[*] file tmp.rdf mode vector ave running overwrite
+
+
+# patch with plumed
+#fix              bias all plumed plumedfile plumed.dat outfile p.log
+
+
+compute 1 naion msd com yes
+compute 2 clion msd com yes
+compute 3 oatom msd com yes
+
+variable t equal time
+variable k equal temp
+variable x equal c_1[1]
+variable y equal c_1[2]
+variable z equal c_1[3]
+variable d equal c_1[4]
+variable xb equal c_2[1]
+variable yb equal c_2[2]
+variable zb equal c_2[3]
+variable db equal c_2[4]
+variable xo equal c_3[1]
+variable yo equal c_3[2]
+variable zo equal c_3[3]
+variable do equal c_3[4]
+
+fix msd all print 100 "$t $k $x $y $z $d ${xb} ${yb} ${zb} ${db} ${xo} ${yo} ${zo} ${do}" file msd.dat
+
+# This command impose to the code to write the trajectory on a file called out.dcd every 500 steps.
+# Other format such as xyz can be used too.
+
+dump            traj_xyz all custom 2000 out.lammpstrj element x y z 
+dump_modify     traj_xyz element Cl H Na O He sort id
+
+# Number of steps to perform.
+
+run             5000000
+
+write_data      final.data
+write_restart    final.restart
+
